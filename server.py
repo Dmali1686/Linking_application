@@ -13,6 +13,7 @@ import qrcode
 from PIL import Image, ImageTk
 from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from zeroconf import ServiceInfo, Zeroconf
 
 # Configuration
 CONFIG_FILE = 'config.json'
@@ -217,6 +218,7 @@ class RemoteApp:
         self.root.resizable(False, False)
         
         self.current_frame = None
+        self.zeroconf = None
         
         # Check if config exists for first-time setup
         if not os.path.exists(CONFIG_FILE):
@@ -267,6 +269,24 @@ class RemoteApp:
         # Start server in background thread
         self.server_thread = threading.Thread(target=run_flask, daemon=True)
         self.server_thread.start()
+        
+        # Start Zeroconf broadcasting
+        try:
+            self.zeroconf = Zeroconf()
+            hostname = socket.gethostname().split('.')[0]
+            desc = {'path': '/'}
+            self.zeroconf_info = ServiceInfo(
+                "_remotecontrol._tcp.local.",
+                f"{hostname}._remotecontrol._tcp.local.",
+                addresses=[socket.inet_aton(local_ip)],
+                port=5000,
+                properties=desc,
+                server=f"{hostname}.local.",
+            )
+            self.zeroconf.register_service(self.zeroconf_info)
+        except Exception as e:
+            print(f"Failed to start Zeroconf: {e}")
+
         self.show_main_screen()
 
     def show_main_screen(self):
@@ -319,7 +339,7 @@ class RemoteApp:
         save_btn.grid(row=0, column=2, padx=10)
         
         # Exit Button
-        exit_btn = ttk.Button(self.current_frame, text="Stop Server & Exit", command=self.root.quit)
+        exit_btn = ttk.Button(self.current_frame, text="Stop Server & Exit", command=self.on_close)
         exit_btn.pack(side="bottom", pady=20)
 
     def update_pin(self):
@@ -334,7 +354,17 @@ class RemoteApp:
         save_config(config)
         messagebox.showinfo("Success", "PIN updated successfully!")
 
+    def on_close(self):
+        if self.zeroconf:
+            try:
+                self.zeroconf.unregister_service(self.zeroconf_info)
+                self.zeroconf.close()
+            except Exception:
+                pass
+        self.root.quit()
+
 if __name__ == '__main__':
     root = tk.Tk()
     app_gui = RemoteApp(root)
+    root.protocol("WM_DELETE_WINDOW", app_gui.on_close)
     root.mainloop()
