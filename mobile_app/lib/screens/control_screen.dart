@@ -57,6 +57,8 @@ class _ControlScreenState extends State<ControlScreen> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
+        width: 100,
+        height: 100,
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(16),
@@ -101,13 +103,38 @@ class _ControlScreenState extends State<ControlScreen> {
     );
   }
 
+  Widget _buildImageActionButton(String label, String imagePath, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: 70,
+        height: 70,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Image.asset(imagePath, width: 32, height: 32),
+            const SizedBox(height: 6),
+            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAppControls() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _buildActionButton('Web', Icons.language, Colors.blueAccent, () => _sendCommand('APPS', 'open_browser')),
-        _buildActionButton('Files', Icons.folder, Colors.amber, () => _sendCommand('APPS', 'open_finder')),
-        _buildActionButton('Terminal', Icons.terminal, Colors.greenAccent, () => _sendCommand('APPS', 'open_terminal')),
+        _buildImageActionButton('Brave', 'assets/images/brave.png', () => _sendCommand('APPS', 'open_brave')),
+        _buildImageActionButton('Chrome', 'assets/images/chrome.png', () => _sendCommand('APPS', 'open_chrome')),
+        _buildImageActionButton('Safari', 'assets/images/safari.png', () => _sendCommand('APPS', 'open_safari')),
+        _buildImageActionButton('Terminal', 'assets/images/terminal.png', () => _sendCommand('APPS', 'open_terminal')),
       ],
     );
   }

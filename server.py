@@ -159,6 +159,14 @@ def handle_command(data):
                     os.system("open -a 'Google Chrome'")
                 elif system_os == 'Windows':
                     os.system("start chrome")
+            elif action == 'open_safari':
+                if system_os == 'Darwin':
+                    os.system("open -a Safari")
+            elif action == 'open_brave':
+                if system_os == 'Darwin':
+                    os.system("open -a 'Brave Browser'")
+                elif system_os == 'Windows':
+                    os.system("start brave")
             elif action == 'open_terminal':
                 if system_os == 'Darwin':
                     os.system("open -a Terminal")
