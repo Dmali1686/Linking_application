@@ -415,8 +415,8 @@ if __name__ == '__main__':
     zeroconf = Zeroconf()
     desc = {'path': '/'}
     info = ServiceInfo(
-        "_http._tcp.local.",
-        f"{socket.gethostname()}._http._tcp.local.",
+        "_remotecontrol._tcp.local.",
+        f"{socket.gethostname()}._remotecontrol._tcp.local.",
         addresses=[socket.inet_aton(get_local_ip())],
         port=5000,
         properties=desc,
