@@ -3,9 +3,12 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class ControlScreen extends StatefulWidget {
-  const ControlScreen({super.key});
+  final IO.Socket? socket;
+  final String? name;
+  const ControlScreen({super.key, this.socket, this.name});
 
   @override
   State<ControlScreen> createState() => _ControlScreenState();
@@ -17,13 +20,24 @@ class _ControlScreenState extends State<ControlScreen> {
   Uint8List? _screenshotBytes;
   bool _isTrackpadActive = false;
   bool _showControls = false;
+  
+  stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  String _voiceCommand = "";
+  Map<String, dynamic> _mediaInfo = {'title': 'Not Playing', 'artist': '', 'playing': false};
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
-    socket = args['socket'];
-    name = args['name'];
+    
+    if (widget.socket != null) {
+      socket = widget.socket!;
+      name = widget.name ?? 'PC';
+    } else {
+      final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
+      socket = args['socket'];
+      name = args['name'];
+    }
 
     socket.on('screenshot_result', (data) {
       if (mounted && data['image'] != null) {
@@ -32,11 +46,50 @@ class _ControlScreenState extends State<ControlScreen> {
         });
       }
     });
+
+    socket.on('media_update', (data) {
+      if (mounted && data != null) {
+        setState(() {
+          _mediaInfo = Map<String, dynamic>.from(data);
+        });
+      }
+    });
+    
+    _initSpeech();
+  }
+
+  void _initSpeech() async {
+    await _speech.initialize();
+  }
+
+  void _listen() async {
+    if (!_isListening) {
+      bool available = await _speech.initialize();
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(onResult: (val) {
+          setState(() {
+            _voiceCommand = val.recognizedWords;
+          });
+          if (val.hasConfidenceRating && val.confidence > 0) {
+             // If stopped listening automatically or user stops
+             _sendCommand('VOICE', 'command', {'text': _voiceCommand});
+          }
+        });
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
+      if (_voiceCommand.isNotEmpty) {
+        _sendCommand('VOICE', 'command', {'text': _voiceCommand});
+      }
+    }
   }
 
   @override
   void dispose() {
-    socket.disconnect();
+    // Note: Do not disconnect socket here if we are managing it from a parent Tab
+    // socket.disconnect();
     super.dispose();
   }
 
@@ -93,12 +146,20 @@ class _ControlScreenState extends State<ControlScreen> {
   }
 
   Widget _buildMediaControls() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _buildActionButton('Vol -', Icons.volume_down, Colors.white, () => _sendCommand('VOLUME', 'volume_down')),
-        _buildActionButton('Mute', Icons.volume_off, Colors.redAccent, () => _sendCommand('VOLUME', 'mute')),
-        _buildActionButton('Vol +', Icons.volume_up, Colors.white, () => _sendCommand('VOLUME', 'volume_up')),
+        Text(_mediaInfo['title'], style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(_mediaInfo['artist'], style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildActionButton('Prev', Icons.skip_previous, Colors.white, () => _sendCommand('MEDIA', 'prev')),
+            _buildActionButton('Play/Pause', _mediaInfo['playing'] ? Icons.pause : Icons.play_arrow, Colors.greenAccent, () => _sendCommand('MEDIA', 'playpause')),
+            _buildActionButton('Next', Icons.skip_next, Colors.white, () => _sendCommand('MEDIA', 'next')),
+          ],
+        ),
       ],
     );
   }
@@ -407,6 +468,11 @@ class _ControlScreenState extends State<ControlScreen> {
             ),
           )
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _listen,
+        backgroundColor: _isListening ? Colors.red : Theme.of(context).colorScheme.primary,
+        child: Icon(_isListening ? Icons.mic : Icons.mic_none, color: Colors.white),
       ),
     );
   }

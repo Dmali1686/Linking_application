@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:ui';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
@@ -13,10 +16,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String _pin = '';
   bool _isConnecting = false;
   IO.Socket? _socket;
+  String? _token;
+  String _errorMessage = '';
   
   late String ip;
   late int port;
   late String name;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadToken();
+  }
 
   @override
   void didChangeDependencies() {
@@ -25,6 +36,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
     ip = args['ip'];
     port = args['port'];
     name = args['name'];
+  }
+
+  void _loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _token = prefs.getString('auth_token_$ip');
+    });
+  }
+
+  void _saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('auth_token_$ip', token);
+    setState(() {
+      _token = token;
+    });
   }
 
   void _onPinKeyPress(String value) {
@@ -46,9 +72,24 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  void _sendWakeOnLan() async {
+    try {
+      final response = await http.post(
+        Uri.parse('http://$ip:$port/wol'),
+        headers: {'Content-Type': 'application/json'},
+      );
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Wake-on-LAN signal sent!')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to send WOL signal'), backgroundColor: Colors.red));
+    }
+  }
+
   void _authenticate() {
     setState(() {
       _isConnecting = true;
+      _errorMessage = '';
     });
 
     final serverUrl = 'http://$ip:$port';
@@ -60,11 +101,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _socket!.connect();
 
     _socket!.onConnect((_) {
-      _socket!.emit('authenticate', {'pin': _pin});
+      _socket!.emit('authenticate', {'pin': _pin, 'token': _token});
     });
 
     _socket!.on('authenticated', (data) {
       if (data['status'] == 'success') {
+        if (data['token'] != null) _saveToken(data['token']);
         Navigator.pushReplacementNamed(
           context, 
           '/control',
@@ -77,9 +119,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
         setState(() {
           _pin = '';
           _isConnecting = false;
+          _errorMessage = data['message'] ?? 'Invalid PIN or Rate Limited.';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid PIN. Try again.', style: TextStyle(color: Colors.white)), backgroundColor: Colors.red),
+          SnackBar(content: Text(_errorMessage), backgroundColor: Colors.red),
         );
         _socket!.disconnect();
       }
@@ -159,20 +202,15 @@ class _ConnectScreenState extends State<ConnectScreen> {
       ),
       body: Stack(
         children: [
-          // Background Gradient
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF0F172A),
-                  Color(0xFF020617),
-                ],
+                colors: [Color(0xFF0F172A), Color(0xFF020617)],
               ),
             ),
           ),
-          
           SafeArea(
             child: _isConnecting 
               ? Center(
@@ -191,11 +229,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       const SizedBox(height: 20),
                       const Icon(Icons.lock_outline, size: 50, color: Colors.white54),
                       const SizedBox(height: 10),
-                      const Text('Enter Security PIN', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, letterSpacing: 1.5)),
-                      const SizedBox(height: 5),
-                      const Text('Please verify to control this PC', style: TextStyle(color: Colors.white54)),
+                      Text(_token == null ? 'Enter Security PIN' : 'Token Found! Tap to Connect', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, letterSpacing: 1.5)),
+                      if(_errorMessage.isNotEmpty) Padding(padding: const EdgeInsets.all(8.0), child: Text(_errorMessage, style: const TextStyle(color: Colors.redAccent))),
                       const SizedBox(height: 30),
-                      
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -205,43 +241,61 @@ class _ConnectScreenState extends State<ConnectScreen> {
                           _buildPinDot(_pin.length > 3),
                         ],
                       ),
-                      
                       const SizedBox(height: 40),
-                      
-                      Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildKeypadButton('1'),
-                              _buildKeypadButton('2'),
-                              _buildKeypadButton('3'),
-                            ],
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildKeypadButton('4'),
-                              _buildKeypadButton('5'),
-                              _buildKeypadButton('6'),
-                            ],
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildKeypadButton('7'),
-                              _buildKeypadButton('8'),
-                              _buildKeypadButton('9'),
-                            ],
-                          ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const SizedBox(width: 94),
-                              _buildKeypadButton('0'),
-                              _buildKeypadButton('', icon: Icons.backspace_outlined, onPressed: _onBackspace),
-                            ],
+                          _buildKeypadButton('1'),
+                          _buildKeypadButton('2'),
+                          _buildKeypadButton('3'),
+                        ],
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildKeypadButton('4'),
+                          _buildKeypadButton('5'),
+                          _buildKeypadButton('6'),
+                        ],
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildKeypadButton('7'),
+                          _buildKeypadButton('8'),
+                          _buildKeypadButton('9'),
+                        ],
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(width: 94),
+                          _buildKeypadButton('0'),
+                          _buildKeypadButton('', icon: Icons.backspace_outlined, onPressed: _onBackspace),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          if (_token != null)
+                            ElevatedButton(
+                              onPressed: _authenticate,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.cyanAccent,
+                                foregroundColor: Colors.black,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const Text('Connect with Token'),
+                            ),
+                          ElevatedButton(
+                            onPressed: _sendWakeOnLan,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.amber,
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('Wake PC (WOL)'),
                           ),
                         ],
                       ),

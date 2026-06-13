@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'screens/discover_screen.dart';
+import 'dart:io';
 import 'screens/connect_screen.dart';
 import 'screens/control_screen.dart';
+import 'screens/main_tab_screen.dart';
+
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
 
 void main() {
+  HttpOverrides.global = MyHttpOverrides();
   runApp(const RemoteControlApp());
 }
 
@@ -38,7 +49,7 @@ class RemoteControlApp extends StatelessWidget {
       routes: {
         '/': (context) => const DiscoverScreen(),
         '/connect': (context) => const ConnectScreen(),
-        '/control': (context) => const ControlScreen(),
+        '/control': (context) => const MainTabScreen(),
       },
       debugShowCheckedModeBanner: false,
     );

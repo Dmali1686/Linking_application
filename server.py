@@ -5,15 +5,29 @@ import io
 import json
 import socket
 import threading
+import sys
+import time
 import platform
-import tkinter as tk
-from tkinter import ttk, messagebox
 import pyautogui
 import qrcode
-from PIL import Image, ImageTk
-from flask import Flask, render_template, request, send_from_directory
+from PIL import Image, ImageDraw
+import pystray
+import webbrowser
+from flask import Flask, render_template, request, send_from_directory, jsonify, send_file
 from flask_socketio import SocketIO, emit
 from zeroconf import ServiceInfo, Zeroconf
+
+from modules.system import get_pc_stats
+from modules.stream import start_stream, stop_stream, stream_loop, set_monitor
+from modules.clipboard import start_clipboard_sync, set_clipboard
+from modules.files import get_files_list, save_uploaded_file
+from modules.media import start_media_sync, media_action
+from modules.notifications import start_notifications_sync
+from modules.macros import play_macro
+from modules.schedule_actions import schedule_action, get_scheduled_jobs
+from modules.presentation import start_presentation_overlay, move_laser, hide_laser
+from modules.security import check_rate_limit, record_failed_attempt, reset_attempts, generate_token, is_valid_token
+from modules.windows import get_windows, window_action
 
 # Configuration
 CONFIG_FILE = 'config.json'
@@ -57,6 +71,22 @@ app.config['SECRET_KEY'] = 'mac-remote-secret!'
 socketio = SocketIO(app, cors_allowed_origins="*")
 authenticated_sids = set()
 
+def stats_loop():
+    while True:
+        try:
+            time.sleep(2)
+            if authenticated_sids:
+                stats = get_pc_stats()
+                socketio.emit('pc_stats', stats)
+        except Exception as e:
+            print("Stats error:", e)
+
+threading.Thread(target=stats_loop, daemon=True).start()
+start_clipboard_sync(socketio, authenticated_sids)
+start_media_sync(socketio, authenticated_sids)
+start_notifications_sync(socketio, authenticated_sids)
+start_presentation_overlay()
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -80,6 +110,18 @@ def manifest():
     }
     return manifest_data
 
+@app.route('/files', methods=['GET'])
+def get_files():
+    path = request.args.get('path')
+    return jsonify(get_files_list(path))
+
+@app.route('/download', methods=['GET'])
+def download_file():
+    path = request.args.get('path')
+    if path and os.path.exists(path) and not os.path.isdir(path):
+        return send_file(path, as_attachment=True)
+    return "File not found", 404
+
 @socketio.on('connect')
 def test_connect():
     pass
@@ -88,18 +130,56 @@ def test_connect():
 def test_disconnect():
     if request.sid in authenticated_sids:
         authenticated_sids.remove(request.sid)
+    stop_stream()
 
 @socketio.on('authenticate')
 def handle_authenticate(data):
+    ip = request.remote_addr
+    if not check_rate_limit(ip):
+        emit('authenticated', {'status': 'fail', 'message': 'Too many failed attempts. Locked out for 5 minutes.'})
+        return
+
     pin = data.get('pin')
-    if pin == PIN:
+    token = data.get('token')
+    config_pin = load_config().get('pin')
+    
+    if token and is_valid_token(token):
         authenticated_sids.add(request.sid)
-        emit('authenticated', {'status': 'success'})
+        emit('authenticated', {'status': 'success', 'token': token})
+        reset_attempts(ip)
+    elif pin == config_pin:
+        authenticated_sids.add(request.sid)
+        new_token = generate_token()
+        emit('authenticated', {'status': 'success', 'token': new_token})
+        reset_attempts(ip)
     else:
-        emit('authenticated', {'status': 'fail'})
+        record_failed_attempt(ip)
+        emit('authenticated', {'status': 'fail', 'message': 'Invalid PIN.'})
 
 def is_authenticated():
     return request.sid in authenticated_sids
+
+@socketio.on('upload_file')
+def handle_upload(data):
+    if not is_authenticated():
+        return
+    filename = data.get('filename')
+    file_data_b64 = data.get('base64data')
+    if filename and file_data_b64:
+        try:
+            file_data = base64.b64decode(file_data_b64)
+            save_uploaded_file(filename, file_data)
+            emit('upload_success', {'filename': filename})
+        except Exception as e:
+            emit('error', {'message': str(e)})
+
+@socketio.on('set_clipboard')
+def handle_set_clipboard(data):
+    if not is_authenticated():
+        return
+    text = data.get('text')
+    if text:
+        set_clipboard(text)
 
 @socketio.on('command')
 def handle_command(data):
@@ -199,6 +279,14 @@ def handle_command(data):
                 img_str = base64.b64encode(buffered.getvalue()).decode()
                 emit('screenshot_result', {'image': img_str})
                 
+        elif cmd_type == 'STREAM':
+            if action == 'start':
+                start_stream(socketio, request.sid)
+            elif action == 'stop':
+                stop_stream()
+            elif action == 'change_monitor':
+                set_monitor(payload.get('monitor_index', 1))
+                
         elif cmd_type == 'KEYBOARD':
             if action == 'type_text':
                 text = payload.get('text', '')
@@ -211,168 +299,156 @@ def handle_command(data):
                     pyautogui.hotkey(modifier, char)
                 else:
                     pyautogui.press(key)
+                    
+        elif cmd_type == 'MEDIA':
+            if action in ['playpause', 'next', 'prev']:
+                media_action(action)
+                
+        elif cmd_type == 'VOICE':
+            text = payload.get('text', '').lower()
+            if 'chrome' in text:
+                if system_os == 'Darwin': os.system("open -a 'Google Chrome'")
+            elif 'close' in text:
+                if system_os == 'Darwin': pyautogui.hotkey('command', 'w')
+                else: pyautogui.hotkey('alt', 'f4')
+            elif 'volume up' in text:
+                pyautogui.press('volumeup')
+            elif 'volume down' in text:
+                pyautogui.press('volumedown')
+            elif 'screenshot' in text:
+                screenshot = pyautogui.screenshot()
+                buffered = io.BytesIO()
+                screenshot.save(buffered, format="JPEG")
+                emit('screenshot_result', {'image': base64.b64encode(buffered.getvalue()).decode()})
+            elif 'sleep' in text:
+                if system_os == 'Darwin': os.system("pmset sleepnow")
+            elif 'shutdown' in text:
+                if system_os == 'Darwin': os.system("sudo shutdown -h now")
+            elif 'scroll up' in text:
+                pyautogui.scroll(10)
+            elif 'scroll down' in text:
+                pyautogui.scroll(-10)
+            elif 'next song' in text:
+                media_action('next')
+            elif 'pause' in text or 'play' in text:
+                media_action('playpause')
+                
+        elif cmd_type == 'MACRO':
+            if action == 'play':
+                play_macro(payload.get('actions', []))
+                
+        elif cmd_type == 'SCHEDULE':
+            if action == 'add':
+                schedule_action(payload.get('action'), payload.get('run_date'))
+                emit('schedule_update', get_scheduled_jobs())
+            elif action == 'get':
+                emit('schedule_update', get_scheduled_jobs())
+                
+        elif cmd_type == 'WINDOWS':
+            if action == 'get':
+                emit('windows_list', get_windows())
+            elif action in ['focus', 'close', 'minimize']:
+                window_action(action, payload.get('app'), payload.get('title'))
+                time.sleep(0.5)
+                emit('windows_list', get_windows())
+                
+        elif cmd_type == 'PRESENTATION':
+            if action == 'laser':
+                move_laser(payload.get('x_percent', 0.5), payload.get('y_percent', 0.5))
+            elif action == 'hide_laser':
+                hide_laser()
+            elif action == 'next_slide':
+                pyautogui.press('right')
+            elif action == 'prev_slide':
+                pyautogui.press('left')
+            elif action == 'black_screen':
+                pyautogui.press('b')
+            
     except Exception as e:
         emit('error', {'message': str(e)})
 
 def run_flask():
-    # Use debug=False to prevent Werkzeug from starting a second process which breaks Tkinter
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
-
-class RemoteApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Remote Control Server")
-        self.root.geometry("450x650")
-        self.root.resizable(False, False)
-        
-        self.current_frame = None
-        self.zeroconf = None
-        
-        # Check if config exists for first-time setup
-        if not os.path.exists(CONFIG_FILE):
-            self.show_setup_screen()
+    try:
+        # Use SSL if certificates exist
+        if os.path.exists('cert.pem') and os.path.exists('key.pem'):
+            socketio.run(app, host='0.0.0.0', port=5000, ssl_context=('cert.pem', 'key.pem'), allow_unsafe_werkzeug=True)
         else:
-            self.start_server_and_show_main()
+            socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+    finally:
+        pass
 
-    def show_setup_screen(self):
-        if self.current_frame:
-            self.current_frame.destroy()
-            
-        self.current_frame = ttk.Frame(self.root, padding=20)
-        self.current_frame.pack(fill="both", expand=True)
-        
-        # Welcome Header
-        header = ttk.Label(self.current_frame, text="Welcome to Remote Control", font=("Inter", 20, "bold"))
-        header.pack(pady=(50, 20))
-        
-        inst_label = ttk.Label(self.current_frame, text="To secure your computer, please set a numeric PIN.\nYou will need to enter this on your phone to connect.", 
-                              font=("Inter", 12), justify="center")
-        inst_label.pack(pady=(0, 40))
-        
-        # PIN Entry
-        pin_label = ttk.Label(self.current_frame, text="Create Security PIN:", font=("Inter", 14))
-        pin_label.pack(pady=(0, 10))
-        
-        self.setup_pin_var = tk.StringVar()
-        pin_entry = ttk.Entry(self.current_frame, textvariable=self.setup_pin_var, font=("Inter", 16), width=12, show="*")
-        pin_entry.pack(pady=(0, 30))
-        
-        # Start Button
-        start_btn = ttk.Button(self.current_frame, text="Save & Start Server", command=self.complete_setup)
-        start_btn.pack(pady=10)
+def create_image():
+    # Generate a simple icon for pystray
+    image = Image.new('RGB', (64, 64), color=(30, 41, 59))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((16, 16, 48, 48), fill=(34, 211, 238))
+    return image
 
-    def complete_setup(self):
-        global PIN
-        new_pin = self.setup_pin_var.get()
-        if len(new_pin) < 4:
-            messagebox.showerror("Error", "PIN must be at least 4 characters.")
-            return
-            
-        PIN = new_pin
-        config['pin'] = PIN
-        save_config(config)
-        self.start_server_and_show_main()
+def on_open_dashboard(icon, item):
+    webbrowser.open('http://127.0.0.1:5000')
 
-    def start_server_and_show_main(self):
-        # Start server in background thread
-        self.server_thread = threading.Thread(target=run_flask, daemon=True)
-        self.server_thread.start()
-        
-        # Start Zeroconf broadcasting
-        try:
-            self.zeroconf = Zeroconf()
-            hostname = socket.gethostname().split('.')[0]
-            desc = {'path': '/'}
-            self.zeroconf_info = ServiceInfo(
-                "_remotecontrol._tcp.local.",
-                f"{hostname}._remotecontrol._tcp.local.",
-                addresses=[socket.inet_aton(local_ip)],
-                port=5000,
-                properties=desc,
-                server=f"{hostname}.local.",
-            )
-            self.zeroconf.register_service(self.zeroconf_info)
-        except Exception as e:
-            print(f"Failed to start Zeroconf: {e}")
+def on_settings(icon, item):
+    if sys.platform == 'win32':
+        os.startfile('config.json')
+    elif sys.platform == 'darwin':
+        os.system('open config.json')
+    else:
+        os.system('xdg-open config.json')
 
-        self.show_main_screen()
+def on_quit(icon, item):
+    icon.stop()
+    global zeroconf, info
+    if zeroconf and info:
+        zeroconf.unregister_service(info)
+        zeroconf.close()
+    os._exit(0)
 
-    def show_main_screen(self):
-        if self.current_frame:
-            self.current_frame.destroy()
-            
-        self.current_frame = ttk.Frame(self.root, padding=20)
-        self.current_frame.pack(fill="both", expand=True)
-
-        # Header
-        header = ttk.Label(self.current_frame, text="Remote Control Active", font=("Inter", 24, "bold"))
-        header.pack(pady=(10, 10))
-        
-        # URL Status
-        url_label = ttk.Label(self.current_frame, text=f"Connect to: {server_url}", font=("Inter", 14))
-        url_label.pack(pady=5)
-        
-        # Instruction
-        inst_label = ttk.Label(self.current_frame, text="Scan this QR code with your phone's camera", font=("Inter", 12))
-        inst_label.pack(pady=(0, 20))
-        
-        # QR Code
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=8,
-            border=2,
-        )
-        qr.add_data(server_url)
-        qr.make(fit=True)
-        
-        qr_img = qr.make_image(fill_color="black", back_color="white")
-        self.qr_photo = ImageTk.PhotoImage(qr_img)
-        
-        qr_label = ttk.Label(self.current_frame, image=self.qr_photo)
-        qr_label.pack(pady=10)
-        
-        # Pin Configuration Frame
-        pin_frame = ttk.Frame(self.current_frame)
-        pin_frame.pack(pady=30)
-        
-        pin_label = ttk.Label(pin_frame, text="Security PIN:", font=("Inter", 14))
-        pin_label.grid(row=0, column=0, padx=10)
-        
-        self.pin_var = tk.StringVar(value=PIN)
-        self.pin_entry = ttk.Entry(pin_frame, textvariable=self.pin_var, font=("Inter", 14), width=10, show="*")
-        self.pin_entry.grid(row=0, column=1, padx=10)
-        
-        save_btn = ttk.Button(pin_frame, text="Update PIN", command=self.update_pin)
-        save_btn.grid(row=0, column=2, padx=10)
-        
-        # Exit Button
-        exit_btn = ttk.Button(self.current_frame, text="Stop Server & Exit", command=self.on_close)
-        exit_btn.pack(side="bottom", pady=20)
-
-    def update_pin(self):
-        global PIN
-        new_pin = self.pin_var.get()
-        if len(new_pin) < 4:
-            messagebox.showerror("Error", "PIN must be at least 4 characters.")
-            return
-            
-        PIN = new_pin
-        config['pin'] = PIN
-        save_config(config)
-        messagebox.showinfo("Success", "PIN updated successfully!")
-
-    def on_close(self):
-        if self.zeroconf:
-            try:
-                self.zeroconf.unregister_service(self.zeroconf_info)
-                self.zeroconf.close()
-            except Exception:
-                pass
-        self.root.quit()
+zeroconf = None
+info = None
 
 if __name__ == '__main__':
-    root = tk.Tk()
-    app_gui = RemoteApp(root)
-    root.protocol("WM_DELETE_WINDOW", app_gui.on_close)
-    root.mainloop()
+    # Initialize default config if not exists
+    if not os.path.exists(CONFIG_FILE):
+        save_config({'pin': '1234'})
+    
+    # Setup mDNS
+    zeroconf = Zeroconf()
+    desc = {'path': '/'}
+    info = ServiceInfo(
+        "_http._tcp.local.",
+        f"{socket.gethostname()}._http._tcp.local.",
+        addresses=[socket.inet_aton(get_local_ip())],
+        port=5000,
+        properties=desc,
+        server=f"{socket.gethostname()}.local."
+    )
+    zeroconf.register_service(info)
+
+    # Start Flask Server in background
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Start System Tray in main thread
+    icon = pystray.Icon("PCRemote")
+    icon.menu = pystray.Menu(
+        pystray.MenuItem("Settings (config.json)", on_settings),
+        pystray.MenuItem("Quit", on_quit)
+    )
+    icon.icon = create_image()
+    icon.title = f"PC Remote Server (PIN: {load_config().get('pin')})"
+    
+    try:
+        icon.run()
+    except Exception as e:
+        print(f"Tray icon failed: {e}")
+    
+    # Fallback to keep the main thread alive if pystray exits immediately (common on macOS)
+    print("Server running in background. Press Ctrl+C to exit.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        if zeroconf and info:
+            zeroconf.unregister_service(info)
+            zeroconf.close()
+
