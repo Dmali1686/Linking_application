@@ -55,6 +55,7 @@ class _WindowsScreenState extends State<WindowsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text('Window Manager'),
         actions: [
           IconButton(

@@ -48,7 +48,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(title: const Text('Schedule'), backgroundColor: Colors.transparent),
+      appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Schedule'), backgroundColor: Colors.transparent),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(

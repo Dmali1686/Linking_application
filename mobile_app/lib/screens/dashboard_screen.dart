@@ -64,6 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text('Dashboard'),
         backgroundColor: Colors.transparent,
       ),

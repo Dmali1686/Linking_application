@@ -33,7 +33,7 @@ class _MacrosScreenState extends State<MacrosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(title: const Text('Macros'), backgroundColor: Colors.transparent),
+      appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Macros'), backgroundColor: Colors.transparent),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

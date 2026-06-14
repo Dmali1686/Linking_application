@@ -324,6 +324,7 @@ class _ControlScreenState extends State<ControlScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF020617),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: Text(name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
         actions: [

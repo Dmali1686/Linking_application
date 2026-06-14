@@ -122,7 +122,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
             ),
           ),
           
-          Column(
+          ListView(
+            padding: EdgeInsets.zero,
             children: [
               const SizedBox(height: 120),
               // Radar Animation
@@ -164,52 +165,51 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                 ),
               ),
               const SizedBox(height: 20),
-              Text(
-                _services.isEmpty ? "Searching the network..." : "Devices Found",
-                style: const TextStyle(color: Colors.white70, fontSize: 16, letterSpacing: 1.2),
+              Center(
+                child: Text(
+                  _services.isEmpty ? "Searching the network..." : "Devices Found",
+                  style: const TextStyle(color: Colors.white70, fontSize: 16, letterSpacing: 1.2),
+                ),
               ),
               const SizedBox(height: 20),
               
               // Device List
-              Expanded(
-                child: _services.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No devices found yet.\nMake sure your Desktop Agent is running.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white54),
+              if (_services.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: Center(
+                    child: Text(
+                      'No devices found yet.\nMake sure your Desktop Agent is running.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ),
+                )
+              else
+                ..._services.map((service) {
+                  final name = service.name?.replaceAll('._remotecontrol._tcp.local.', '') ?? 'Unknown Device';
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 20, right: 20, bottom: 16.0),
+                    child: _buildGlassCard(
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.all(16),
+                        leading: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.computer, size: 30, color: Colors.white),
                         ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                        itemCount: _services.length,
-                        itemBuilder: (context, index) {
-                          final service = _services[index];
-                          final name = service.name?.replaceAll('._remotecontrol._tcp.local.', '') ?? 'Unknown Device';
-                          
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 16.0),
-                            child: _buildGlassCard(
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.all(16),
-                                leading: Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(Icons.computer, size: 30, color: Colors.white),
-                                ),
-                                title: Text(name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                                subtitle: const Text('Ready to connect', style: TextStyle(color: Colors.white54)),
-                                trailing: const Icon(Icons.chevron_right, color: Colors.white),
-                                onTap: () => _connectToService(service),
-                              ),
-                            ),
-                          );
-                        },
+                        title: Text(name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Ready to connect', style: TextStyle(color: Colors.white54)),
+                        trailing: const Icon(Icons.chevron_right, color: Colors.white),
+                        onTap: () => _connectToService(service),
                       ),
-              ),
+                    ),
+                  );
+                }),
             ],
           ),
         ],

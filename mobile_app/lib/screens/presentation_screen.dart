@@ -17,7 +17,7 @@ class PresentationScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
-      appBar: AppBar(title: const Text('Presentation'), backgroundColor: Colors.transparent),
+      appBar: AppBar(automaticallyImplyLeading: false, title: const Text('Presentation'), backgroundColor: Colors.transparent),
       body: Column(
         children: [
           Expanded(

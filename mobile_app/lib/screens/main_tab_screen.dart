@@ -80,6 +80,13 @@ class _MainTabScreenState extends State<MainTabScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
         title: const Text('PC Remote'),
         backgroundColor: const Color(0xFF1E293B),
       ),
